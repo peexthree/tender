@@ -12,13 +12,12 @@ const readJsonFile = (file) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const json = JSON.parse(e.target.result);
-        resolve(json);
+        resolve(JSON.parse(e.target.result));
       } catch {
-        reject(new Error(`Ошибка парсинга JSON в файле ${file.name}`));
+        reject(new Error(`Ошибка парсинга JSON: ${file.name}`));
       }
     };
-    reader.onerror = () => reject(new Error(`Ошибка чтения файла ${file.name}`));
+    reader.onerror = () => reject(new Error(`Ошибка чтения: ${file.name}`));
     reader.readAsText(file);
   });
 };
@@ -30,60 +29,48 @@ const readDocxFile = (file) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => resolve(e.target.result);
-    reader.onerror = () => reject(new Error(`Ошибка чтения файла ${file.name}`));
+    reader.onerror = () => reject(new Error(`Ошибка чтения: ${file.name}`));
     reader.readAsArrayBuffer(file);
   });
 };
 
 /**
- * Извлекает значение из данных по пути (например, "customer.full_name")
+ * Извлекает значение из данных с жесткой защитой от undefined
  */
 const getValueFromPath = (data, path) => {
   if (!path) return '';
-  return path.split('.').reduce((acc, part) => {
+  const val = path.split('.').reduce((acc, part) => {
     return acc && acc[part] !== undefined ? acc[part] : undefined;
   }, data);
+  // Блокируем попадание null и undefined в итоговый документ
+  return val === undefined || val === null ? '' : val;
 };
 
 /**
- * Строит объект контекста для конкретного шаблона на основе mapping.json
+ * Строит объект контекста для конкретного шаблона на основе конфигурации
  */
 const buildContextForTemplate = (templateMapping, globalData) => {
   const context = {};
-
   if (!templateMapping) return context;
 
   for (const [docTag, dataPath] of Object.entries(templateMapping)) {
-    // Особая обработка массивов (например items)
     if (docTag.startsWith('ARRAY:')) {
       const actualTag = docTag.replace('ARRAY:', '');
       const arrayData = getValueFromPath(globalData, dataPath);
-
-      if (Array.isArray(arrayData)) {
-        context[actualTag] = arrayData;
-      } else {
-        context[actualTag] = [];
-        useStore.getState().addLog(`[WARNING] Массив по пути ${dataPath} не найден`, 'warning');
-      }
+      context[actualTag] = Array.isArray(arrayData) ? arrayData : [];
     } else if (typeof dataPath === 'object') {
-       // Если маппинг вложенный, просто берем как есть или пытаемся разрезолвить каждый ключ
-       // В простом варианте - мы просто берем данные из globalData по ключам
        context[docTag] = getValueFromPath(globalData, docTag) || '';
     } else {
       context[docTag] = getValueFromPath(globalData, dataPath) || '';
     }
   }
 
-  // На случай, если в самом mapping не указаны переменные массива явно (добавляем массивы из globalData напрямую)
-  // Это позволит конструкции [#items] [name] [/items] работать "из коробки" если items есть в глобальных данных
+  // Fallback: подхват массивов из корня
   for (const [key, value] of Object.entries(globalData)) {
-    if (Array.isArray(value)) {
-       if(!context[key]) {
-           context[key] = value;
-       }
+    if (Array.isArray(value) && !context[key]) {
+       context[key] = value;
     }
   }
-
   return context;
 };
 
@@ -94,55 +81,49 @@ export const generateDocuments = async () => {
   const store = useStore.getState();
   const { jsonFiles, docxTemplates, addLog } = store;
 
-  addLog('[START] Инициализация процесса генерации...', 'info');
+  addLog('[START] Запуск детерминированного генератора...', 'info');
 
   if (docxTemplates.length === 0) {
     addLog('[ERROR] Шаблоны DOCX не загружены', 'error');
     return;
   }
 
-  // 1. Поиск mapping.json
   const mappingFile = jsonFiles.find(f => f.name.toLowerCase() === 'mapping.json');
   if (!mappingFile) {
-    addLog('[ERROR] Файл mapping.json не найден среди загруженных данных', 'error');
+    addLog('[ERROR] Отсутствует конфигурация mapping.json', 'error');
     return;
   }
 
-  addLog('[ОК] Файл mapping.json найден', 'success');
-
   try {
-    // 2. Парсинг mapping.json
     const mappingData = await readJsonFile(mappingFile);
-
-    // 3. Агрегация всех остальных JSON в единый contextData
     const dataFiles = jsonFiles.filter(f => f.name.toLowerCase() !== 'mapping.json');
     let globalContextData = {};
 
     for (const file of dataFiles) {
       const data = await readJsonFile(file);
-      // Если файл tender.json - сохраняем его содержимое в свойство tender, иначе мержим в корень
       const fileBaseName = file.name.replace('.json', '');
-
-      // Положим данные и в корень (для прямого доступа) и под именем файла
-      globalContextData = {
-        ...globalContextData,
-        ...data,
-        [fileBaseName]: data
-      };
-      addLog(`[ОК] Данные из ${file.name} добавлены в контекст`, 'info');
+      globalContextData = { ...globalContextData, ...data, [fileBaseName]: data };
     }
 
-    // 4. Инициализация итогового ZIP архива
     const outputZip = new JSZip();
     let generatedCount = 0;
 
-    // 5. Обход шаблонов
     for (const templateFile of docxTemplates) {
-      addLog(`[PROCESS] Обработка шаблона: ${templateFile.name}`, 'info');
+      addLog(`[PROCESS] Компиляция: ${templateFile.name}`, 'info');
 
-      // Ищем маппинг для данного шаблона. Имя ключа в маппинге должно совпадать с именем файла
-      // или берем 'default' если есть
-      const templateConfig = mappingData[templateFile.name] || mappingData['default'] || {};
+      // Умный поиск маппинга: проверяем вложенную структуру "docs"
+      let templateConfig = {};
+      if (mappingData.docs) {
+        const docKey = Object.keys(mappingData.docs).find(k => mappingData.docs[k].template_name === templateFile.name);
+        if (docKey) {
+          templateConfig = mappingData.docs[docKey].fields || {};
+          if (mappingData.docs[docKey]['ARRAY:items']) {
+             templateConfig['ARRAY:items'] = mappingData.docs[docKey]['ARRAY:items'];
+          }
+        }
+      } else {
+        templateConfig = mappingData[templateFile.name] || mappingData['default'] || {};
+      }
 
       const templateContext = buildContextForTemplate(templateConfig, globalContextData);
 
@@ -154,77 +135,63 @@ export const generateDocuments = async () => {
         const docXmlFile = zip.file("word/document.xml");
         if (docXmlFile) {
           let xml = docXmlFile.asText();
-
-          // Регулярка для поиска всех строк таблицы (<w:tr ...>...</w:tr>)
           const trRegex = /<w:tr\b[^>]*>.*?<\/w:tr>/gs;
           let match;
-          const rows = [];
+          const targetRows = [];
+          
           while ((match = trRegex.exec(xml)) !== null) {
-            rows.push({
-              fullMatch: match[0],
-              index: match.index,
-              length: match[0].length
-            });
+            if (match[0].includes("Наименование продукции")) {
+              targetRows.push({ fullMatch: match[0], index: match.index, length: match[0].length });
+            }
           }
 
-          // Фильтруем строки, в которых есть текст "Наименование продукции"
-          const targetRows = rows.filter(r => r.fullMatch.includes("Наименование продукции"));
-
           if (targetRows.length > 0) {
-            // Патчим первую найденную строку
             let firstRowHtml = targetRows[0].fullMatch;
 
-            // Заменяем значения по ТЗ (строго 1, Наименование продукции и т.д.)
+            // Ювелирная замена текста внутри существующих тегов XML, чтобы избежать двойных скобок
             firstRowHtml = firstRowHtml.replace("1", "[#items][line_no]");
-            firstRowHtml = firstRowHtml.replace("Наименование продукции", "[quote_name]");
-            firstRowHtml = firstRowHtml.replace("Ед. изм.", "[offer_unit]");
-            firstRowHtml = firstRowHtml.replace("НМЦ за ед.", "[nmc_unit_price]");
-            firstRowHtml = firstRowHtml.replace("Цена за ед. без НДС", "[unit_price_wo_vat]");
-            firstRowHtml = firstRowHtml.replace("Кол-во", "[offer_qty]");
-            firstRowHtml = firstRowHtml.replace("Сумма без НДС", "[line_total_wo_vat][/items]");
+            firstRowHtml = firstRowHtml.replace("Наименование продукции", "quote_name");
+            firstRowHtml = firstRowHtml.replace("Ед. изм.", "offer_unit");
+            firstRowHtml = firstRowHtml.replace("НМЦ за ед.", "nmc_unit_price");
+            firstRowHtml = firstRowHtml.replace("Цена за ед. без НДС", "unit_price_wo_vat");
+            firstRowHtml = firstRowHtml.replace("Кол-во", "offer_qty");
+            
+            // Внимание: оригинальный текст "[Сумма без НДС]". Заменяем только текст внутри,
+            // чтобы закрывающая скобка от оригинала стала частью тега [/items]
+            firstRowHtml = firstRowHtml.replace("Сумма без НДС", "line_total_wo_vat][/items");
 
-            // Удаляем мусорные строки (начиная со второй)
-            // Идем с конца, чтобы индексы не смещались при удалении
+            // Удаляем мусорные клоны строк с конца, чтобы не сбить индексы
             for (let i = targetRows.length - 1; i >= 1; i--) {
               const row = targetRows[i];
               xml = xml.slice(0, row.index) + xml.slice(row.index + row.length);
             }
 
-            // Теперь заменяем первую строку. Так как мы уже удалили дубликаты, первое вхождение - наше
+            // Внедряем пропатченную строку
             xml = xml.replace(targetRows[0].fullMatch, firstRowHtml);
-
-            // Сохраняем пропатченный XML обратно
             zip.file("word/document.xml", xml);
-            addLog("[ОК] XML документа пропатчен (цикл таблицы настроен)", "success");
+            addLog("[XML-HACK] Структура таблицы переписана на лету", "success");
           }
         }
         // --- END XML PREPROCESSOR HACK ---
 
-        // Настройка docxtemplater
         const doc = new Docxtemplater(zip, {
           paragraphLoop: true,
           linebreaks: true,
           delimiters: { start: '[', end: ']' },
         });
 
-        // Рендер
         doc.render(templateContext);
 
-        // Получаем готовый буфер документа
         const generatedBuffer = doc.getZip().generate({
           type: 'blob',
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         });
 
-        // Добавляем в общий архив с префиксом
-        const outputName = `Generated_${templateFile.name}`;
-        outputZip.file(outputName, generatedBuffer);
-
-        addLog(`[ОК] Документ ${outputName} успешно сгенерирован`, 'success');
+        outputZip.file(`Generated_${templateFile.name}`, generatedBuffer);
+        addLog(`[ОК] ${templateFile.name} скомпилирован`, 'success');
         generatedCount++;
       } catch (error) {
-        addLog(`[ERROR] Ошибка генерации ${templateFile.name}: ${error.message}`, 'error');
-        // В случае ошибки с тегами docxtemplater
+        addLog(`[ERROR] Сбой генерации ${templateFile.name}: ${error.message}`, 'error');
         if (error.properties && error.properties.errors instanceof Array) {
           const errorMessages = error.properties.errors.map(e => e.properties.explanation).join(", ");
           addLog(`[ERROR DETAILS] ${errorMessages}`, 'error');
@@ -232,18 +199,13 @@ export const generateDocuments = async () => {
       }
     }
 
-    // 6. Скачивание итогового архива
     if (generatedCount > 0) {
-      addLog('[PROCESS] Упаковка готовых документов в ZIP-архив...', 'info');
       const finalArchive = await outputZip.generateAsync({ type: 'blob' });
       saveAs(finalArchive, 'Tender_Documents.zip');
-      addLog('[ОК] Архив успешно скачан!', 'success');
-    } else {
-      addLog('[WARNING] Не удалось сгенерировать ни одного документа', 'warning');
+      addLog('[SUCCESS] Пакет документов сформирован и скачан', 'success');
     }
 
   } catch (error) {
-    addLog(`[CRITICAL] Ошибка выполнения: ${error.message}`, 'error');
-    console.error(error);
+    addLog(`[CRITICAL] Фатальная ошибка: ${error.message}`, 'error');
   }
 };
