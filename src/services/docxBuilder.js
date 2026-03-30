@@ -4,9 +4,6 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import useStore from '../store/useStore';
 
-/**
- * Читает содержимое JSON файла как текст
- */
 const readJsonFile = (file) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -22,9 +19,6 @@ const readJsonFile = (file) => {
   });
 };
 
-/**
- * Читает содержимое DOCX файла как ArrayBuffer
- */
 const readDocxFile = (file) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -34,21 +28,15 @@ const readDocxFile = (file) => {
   });
 };
 
-/**
- * Извлекает значение из данных с жесткой защитой от undefined
- */
+// Жесткая защита от undefined
 const getValueFromPath = (data, path) => {
   if (!path) return '';
   const val = path.split('.').reduce((acc, part) => {
     return acc && acc[part] !== undefined ? acc[part] : undefined;
   }, data);
-  // Блокируем попадание null и undefined в итоговый документ
   return val === undefined || val === null ? '' : val;
 };
 
-/**
- * Строит объект контекста для конкретного шаблона на основе конфигурации
- */
 const buildContextForTemplate = (templateMapping, globalData) => {
   const context = {};
   if (!templateMapping) return context;
@@ -65,7 +53,6 @@ const buildContextForTemplate = (templateMapping, globalData) => {
     }
   }
 
-  // Fallback: подхват массивов из корня
   for (const [key, value] of Object.entries(globalData)) {
     if (Array.isArray(value) && !context[key]) {
        context[key] = value;
@@ -74,9 +61,6 @@ const buildContextForTemplate = (templateMapping, globalData) => {
   return context;
 };
 
-/**
- * Главная функция генерации архива документов
- */
 export const generateDocuments = async () => {
   const store = useStore.getState();
   const { jsonFiles, docxTemplates, addLog } = store;
@@ -101,7 +85,8 @@ export const generateDocuments = async () => {
 
     for (const file of dataFiles) {
       const data = await readJsonFile(file);
-      const fileBaseName = file.name.replace('.json', '');
+      // ИСПРАВЛЕНИЕ 1: Отрезаем _example от имени файла, чтобы маппинг работал железно
+      const fileBaseName = file.name.replace('.json', '').replace('_example', '');
       globalContextData = { ...globalContextData, ...data, [fileBaseName]: data };
     }
 
@@ -111,7 +96,6 @@ export const generateDocuments = async () => {
     for (const templateFile of docxTemplates) {
       addLog(`[PROCESS] Компиляция: ${templateFile.name}`, 'info');
 
-      // Умный поиск маппинга: проверяем вложенную структуру "docs"
       let templateConfig = {};
       if (mappingData.docs) {
         const docKey = Object.keys(mappingData.docs).find(k => mappingData.docs[k].template_name === templateFile.name);
@@ -145,29 +129,26 @@ export const generateDocuments = async () => {
             }
           }
 
-          if (targetRows.length > 0) {
-            let firstRowHtml = targetRows[0].fullMatch;
+          // ИСПРАВЛЕНИЕ 2: Патчим строку с индексом 1 (данные), а не 0 (шапка)
+          if (targetRows.length >= 2) {
+            let firstDataRowHtml = targetRows[1].fullMatch;
 
-            // Ювелирная замена текста внутри существующих тегов XML, чтобы избежать двойных скобок
-            firstRowHtml = firstRowHtml.replace("1", "[#items][line_no]");
-            firstRowHtml = firstRowHtml.replace("Наименование продукции", "quote_name");
-            firstRowHtml = firstRowHtml.replace("Ед. изм.", "offer_unit");
-            firstRowHtml = firstRowHtml.replace("НМЦ за ед.", "nmc_unit_price");
-            firstRowHtml = firstRowHtml.replace("Цена за ед. без НДС", "unit_price_wo_vat");
-            firstRowHtml = firstRowHtml.replace("Кол-во", "offer_qty");
-            
-            // Внимание: оригинальный текст "[Сумма без НДС]". Заменяем только текст внутри,
-            // чтобы закрывающая скобка от оригинала стала частью тега [/items]
-            firstRowHtml = firstRowHtml.replace("Сумма без НДС", "line_total_wo_vat][/items");
+            firstDataRowHtml = firstDataRowHtml.replace("1", "[#items][line_no]");
+            firstDataRowHtml = firstDataRowHtml.replace("Наименование продукции", "quote_name");
+            firstDataRowHtml = firstDataRowHtml.replace("Ед. изм.", "offer_unit");
+            firstDataRowHtml = firstDataRowHtml.replace("НМЦ за ед.", "nmc_unit_price");
+            firstDataRowHtml = firstDataRowHtml.replace("Цена за ед. без НДС", "unit_price_wo_vat");
+            firstDataRowHtml = firstDataRowHtml.replace("Кол-во", "offer_qty");
+            firstDataRowHtml = firstDataRowHtml.replace("Сумма без НДС", "line_total_wo_vat][/items");
 
-            // Удаляем мусорные клоны строк с конца, чтобы не сбить индексы
-            for (let i = targetRows.length - 1; i >= 1; i--) {
+            // Удаляем мусорные клоны строк с конца, оставляя шапку и нашу пропатченную строку
+            for (let i = targetRows.length - 1; i >= 2; i--) {
               const row = targetRows[i];
               xml = xml.slice(0, row.index) + xml.slice(row.index + row.length);
             }
 
             // Внедряем пропатченную строку
-            xml = xml.replace(targetRows[0].fullMatch, firstRowHtml);
+            xml = xml.replace(targetRows[1].fullMatch, firstDataRowHtml);
             zip.file("word/document.xml", xml);
             addLog("[XML-HACK] Структура таблицы переписана на лету", "success");
           }
