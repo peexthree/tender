@@ -163,6 +163,7 @@ export const generateDocuments = async () => {
           paragraphLoop: true,
           linebreaks: true,
           delimiters: { start: '[', end: ']' },
+          nullGetter: function() { return ""; } 
         });
 
         doc.render(templateContext);
