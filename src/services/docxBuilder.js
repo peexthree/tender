@@ -55,15 +55,15 @@ const buildContextForTemplate = (templateMapping, globalData) => {
 
   for (const [docTag, dataPath] of Object.entries(templateMapping)) {
     // Особая обработка массивов (например items)
-    if (typeof dataPath === 'string' && dataPath.startsWith('ARRAY:')) {
-      const arrayPath = dataPath.replace('ARRAY:', '');
-      const arrayData = getValueFromPath(globalData, arrayPath);
+    if (docTag.startsWith('ARRAY:')) {
+      const actualTag = docTag.replace('ARRAY:', '');
+      const arrayData = getValueFromPath(globalData, dataPath);
 
       if (Array.isArray(arrayData)) {
-        context[docTag] = arrayData;
+        context[actualTag] = arrayData;
       } else {
-        context[docTag] = [];
-        useStore.getState().addLog(`[WARNING] Массив по пути ${arrayPath} не найден`, 'warning');
+        context[actualTag] = [];
+        useStore.getState().addLog(`[WARNING] Массив по пути ${dataPath} не найден`, 'warning');
       }
     } else if (typeof dataPath === 'object') {
        // Если маппинг вложенный, просто берем как есть или пытаемся разрезолвить каждый ключ
