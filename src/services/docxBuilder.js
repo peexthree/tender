@@ -28,7 +28,6 @@ const readDocxFile = (file) => {
   });
 };
 
-// Жесткая защита от undefined
 const getValueFromPath = (data, path) => {
   if (!path) return '';
   const val = path.split('.').reduce((acc, part) => {
@@ -85,7 +84,7 @@ export const generateDocuments = async () => {
 
     for (const file of dataFiles) {
       const data = await readJsonFile(file);
-      // ИСПРАВЛЕНИЕ 1: Отрезаем _example от имени файла, чтобы маппинг работал железно
+      // Умная обрезка _example, чтобы маппинг находил данные
       const fileBaseName = file.name.replace('.json', '').replace('_example', '');
       globalContextData = { ...globalContextData, ...data, [fileBaseName]: data };
     }
@@ -115,7 +114,7 @@ export const generateDocuments = async () => {
         const content = await readDocxFile(templateFile);
         const zip = new PizZip(content);
 
-        // --- XML PREPROCESSOR HACK ---
+        // --- БЕЗОПАСНЫЙ XML PREPROCESSOR ---
         const docXmlFile = zip.file("word/document.xml");
         if (docXmlFile) {
           let xml = docXmlFile.asText();
@@ -129,31 +128,36 @@ export const generateDocuments = async () => {
             }
           }
 
-          // ИСПРАВЛЕНИЕ 2: Патчим строку с индексом 1 (данные), а не 0 (шапка)
+          // Работаем со строкой 1 (строка 0 - это шапка таблицы)
           if (targetRows.length >= 2) {
             let firstDataRowHtml = targetRows[1].fullMatch;
 
-            firstDataRowHtml = firstDataRowHtml.replace("1", "[#items][line_no]");
-            firstDataRowHtml = firstDataRowHtml.replace("Наименование продукции", "quote_name");
+            // 100% безопасное открытие цикла в одной ячейке с названием
+            firstDataRowHtml = firstDataRowHtml.replace("Наименование продукции", "#items][quote_name");
+            
+            // Ювелирная замена единицы строго внутри текстового тега <w:t>
+            firstDataRowHtml = firstDataRowHtml.replace(/>\s*1\s*<\/w:t>/, ">[line_no]</w:t>");
+            
             firstDataRowHtml = firstDataRowHtml.replace("Ед. изм.", "offer_unit");
             firstDataRowHtml = firstDataRowHtml.replace("НМЦ за ед.", "nmc_unit_price");
             firstDataRowHtml = firstDataRowHtml.replace("Цена за ед. без НДС", "unit_price_wo_vat");
             firstDataRowHtml = firstDataRowHtml.replace("Кол-во", "offer_qty");
+            
+            // Закрытие цикла
             firstDataRowHtml = firstDataRowHtml.replace("Сумма без НДС", "line_total_wo_vat][/items");
 
-            // Удаляем мусорные клоны строк с конца, оставляя шапку и нашу пропатченную строку
+            // Удаляем мусорные клоны строк с конца
             for (let i = targetRows.length - 1; i >= 2; i--) {
               const row = targetRows[i];
               xml = xml.slice(0, row.index) + xml.slice(row.index + row.length);
             }
 
-            // Внедряем пропатченную строку
             xml = xml.replace(targetRows[1].fullMatch, firstDataRowHtml);
             zip.file("word/document.xml", xml);
-            addLog("[XML-HACK] Структура таблицы переписана на лету", "success");
+            addLog("[XML-HACK] Таблица пропатчена на лету (Safe Mode)", "success");
           }
         }
-        // --- END XML PREPROCESSOR HACK ---
+        // --- КОНЕЦ XML PREPROCESSOR ---
 
         const doc = new Docxtemplater(zip, {
           paragraphLoop: true,
