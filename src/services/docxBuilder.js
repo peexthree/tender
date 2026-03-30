@@ -75,7 +75,7 @@ const buildContextForTemplate = (templateMapping, globalData) => {
   }
 
   // На случай, если в самом mapping не указаны переменные массива явно (добавляем массивы из globalData напрямую)
-  // Это позволит конструкции {#items} {name} {/items} работать "из коробки" если items есть в глобальных данных
+  // Это позволит конструкции [#items] [name] [/items] работать "из коробки" если items есть в глобальных данных
   for (const [key, value] of Object.entries(globalData)) {
     if (Array.isArray(value)) {
        if(!context[key]) {
@@ -150,10 +150,61 @@ export const generateDocuments = async () => {
         const content = await readDocxFile(templateFile);
         const zip = new PizZip(content);
 
+        // --- XML PREPROCESSOR HACK ---
+        const docXmlFile = zip.file("word/document.xml");
+        if (docXmlFile) {
+          let xml = docXmlFile.asText();
+
+          // Регулярка для поиска всех строк таблицы (<w:tr ...>...</w:tr>)
+          const trRegex = /<w:tr\b[^>]*>.*?<\/w:tr>/gs;
+          let match;
+          const rows = [];
+          while ((match = trRegex.exec(xml)) !== null) {
+            rows.push({
+              fullMatch: match[0],
+              index: match.index,
+              length: match[0].length
+            });
+          }
+
+          // Фильтруем строки, в которых есть текст "Наименование продукции"
+          const targetRows = rows.filter(r => r.fullMatch.includes("Наименование продукции"));
+
+          if (targetRows.length > 0) {
+            // Патчим первую найденную строку
+            let firstRowHtml = targetRows[0].fullMatch;
+
+            // Заменяем значения по ТЗ (строго 1, Наименование продукции и т.д.)
+            firstRowHtml = firstRowHtml.replace("1", "[#items][line_no]");
+            firstRowHtml = firstRowHtml.replace("Наименование продукции", "[quote_name]");
+            firstRowHtml = firstRowHtml.replace("Ед. изм.", "[offer_unit]");
+            firstRowHtml = firstRowHtml.replace("НМЦ за ед.", "[nmc_unit_price]");
+            firstRowHtml = firstRowHtml.replace("Цена за ед. без НДС", "[unit_price_wo_vat]");
+            firstRowHtml = firstRowHtml.replace("Кол-во", "[offer_qty]");
+            firstRowHtml = firstRowHtml.replace("Сумма без НДС", "[line_total_wo_vat][/items]");
+
+            // Удаляем мусорные строки (начиная со второй)
+            // Идем с конца, чтобы индексы не смещались при удалении
+            for (let i = targetRows.length - 1; i >= 1; i--) {
+              const row = targetRows[i];
+              xml = xml.slice(0, row.index) + xml.slice(row.index + row.length);
+            }
+
+            // Теперь заменяем первую строку. Так как мы уже удалили дубликаты, первое вхождение - наше
+            xml = xml.replace(targetRows[0].fullMatch, firstRowHtml);
+
+            // Сохраняем пропатченный XML обратно
+            zip.file("word/document.xml", xml);
+            addLog("[ОК] XML документа пропатчен (цикл таблицы настроен)", "success");
+          }
+        }
+        // --- END XML PREPROCESSOR HACK ---
+
         // Настройка docxtemplater
         const doc = new Docxtemplater(zip, {
           paragraphLoop: true,
           linebreaks: true,
+          delimiters: { start: '[', end: ']' },
         });
 
         // Рендер

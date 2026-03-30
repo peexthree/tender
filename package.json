@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "autoprefixer": "^10.4.27",
-    "axios": "^1.14.0",
     "clsx": "^2.1.1",
     "docxtemplater": "^3.68.3",
     "file-saver": "^2.0.5",
