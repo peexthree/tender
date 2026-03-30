@@ -1,6 +1,5 @@
 import React from 'react';
 import DropZone from './components/DropZone';
-import AiParser from './components/AiParser';
 import TerminalLog from './components/TerminalLog';
 import GenerateButton from './components/GenerateButton';
 import { Layers } from 'lucide-react';
@@ -34,9 +33,6 @@ function App() {
             <DropZone />
             <GenerateButton />
           </div>
-
-          {/* Панель AI Парсера */}
-          <AiParser />
         </div>
 
         {/* Правая панель - Терминал */}
