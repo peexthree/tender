@@ -1,0 +1,53 @@
+{
+  "docs": {
+    "anketa": {
+      "template_name": "01_Анкета_участника_шаблон.docx",
+      "output_name": "01_Анкета_участника.docx",
+      "fields": {
+        "Полное наименование участника": "company_profile.company.full_name",
+        "Краткое наименование участника": "company_profile.company.short_name",
+        "ИНН": "company_profile.company.inn",
+        "КПП": "company_profile.company.kpp",
+        "ОГРН": "company_profile.company.ogrn",
+        "Юридический адрес": "company_profile.company.legal_address_full",
+        "Расчетный счет": "company_profile.bank.account",
+        "Наименование банка": "company_profile.bank.name",
+        "Корреспондентский счет": "company_profile.bank.correspondent_account",
+        "БИК": "company_profile.bank.bik",
+        "Контактное лицо": "company_profile.contact.responsible_name_full",
+        "E-mail": "company_profile.contact.email",
+        "Телефон": "company_profile.contact.phone",
+        "Должность подписанта": "company_profile.signatory.position",
+        "ФИО подписанта": "company_profile.signatory.name_short"
+      }
+    },
+    "zayavka": {
+      "template_name": "02_Заявка_на_участие_в_закупке_шаблон.docx",
+      "output_name": "02_Заявка_на_участие.docx",
+      "fields": {
+        "Дата в формате «26» марта 2026 года": "tender.bid_deadline",
+        "Исх. номер заявки": "tender.purchase_number",
+        "Полное наименование участника": "company_profile.company.full_name",
+        "Юридический адрес": "company_profile.company.legal_address_full",
+        "Предмет закупки": "tender.subject",
+        "Срок действия предложения, дней": "tender.offer_validity_days",
+        "Должность подписанта": "company_profile.signatory.position",
+        "ФИО подписанта": "company_profile.signatory.name_short"
+      }
+    },
+    "predlozhenie": {
+      "template_name": "03_Предложение_о_цене_договора_шаблон.docx",
+      "output_name": "03_Предложение_о_цене.docx",
+      "fields": {
+        "Краткое наименование участника": "company_profile.company.short_name",
+        "ИНН": "company_profile.company.inn",
+        "Итого без НДС": "calc.subtotal_wo_vat",
+        "Сумма НДС": "calc.vat_amount",
+        "Итого с НДС": "calc.total_with_vat",
+        "Должность подписанта": "company_profile.signatory.position",
+        "ФИО подписанта": "company_profile.signatory.name_short"
+      },
+      "ARRAY:items": "calc.items"
+    }
+  }
+}
